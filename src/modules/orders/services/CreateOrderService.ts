@@ -20,13 +20,64 @@ interface IRequest {
 @injectable()
 class CreateOrderService {
   constructor(
+    @inject('OrdersRepository')
     private ordersRepository: IOrdersRepository,
+
+    @inject('ProductsRepository')
     private productsRepository: IProductsRepository,
+
+    @inject('CustomersRepository')
     private customersRepository: ICustomersRepository,
   ) {}
 
   public async execute({ customer_id, products }: IRequest): Promise<Order> {
-    // TODO
+    const customer = await this.customersRepository.findById(customer_id);
+
+    if (!customer) {
+      throw new AppError('Customer not found.');
+    }
+
+    const productsExists = await this.productsRepository.findAllById(products);
+    const productIds = productsExists.map(product => product.id);
+    const productsNotExists = productsExists.filter(
+      product => !productIds.includes(product.id),
+    );
+
+    if (productsNotExists.length) {
+      throw new AppError('Product not found');
+    }
+
+    const productWithStock = productsExists.filter(
+      product =>
+        products.filter(item => product.id === item.id)[0].quantity <=
+        product.quantity,
+    );
+
+    if (!productWithStock.length) {
+      throw new AppError('Product out of stock');
+    }
+
+    const productsSold = products.map(product => ({
+      product_id: product.id,
+      quantity: product.quantity,
+      price: productsExists.filter(item => item.id === product.id)[0].price,
+    }));
+
+    const order = await this.ordersRepository.create({
+      customer,
+      products: productsSold,
+    });
+
+    const outOfStockProducts = order.order_products.map(product => ({
+      id: product.product_id,
+      quantity:
+        productsExists.filter(item => item.id === product.product_id)[0]
+          .quantity - product.quantity,
+    }));
+
+    await this.productsRepository.updateQuantity(outOfStockProducts);
+
+    return order;
   }
 }
 
